@@ -30,6 +30,7 @@
 #include <net/udp.h>
 #include <net/route.h>
 
+#include "bitmap_util.h"
 
 
 #include "ieee80211_i.h"
@@ -41,7 +42,7 @@
 #include "wme.h"
 #include "rate.h"
 #include "ts-util.h"
-
+#include "bitmap_util.h"
 
 
 #define LOG_FUNCTION(LOGLEVEL)	(printk(LOGLEVEL "%s\n", __func__ ))
@@ -1813,12 +1814,15 @@ static void ieee80211_tx_latency_start_msrmnt(struct ieee80211_local *local,
 
 netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				    struct net_device *dev){
-	u8  bit, prev_bit;
+	struct bitmap_t b;
     struct iphdr *iph;
     struct udphdr *udph;
     struct tshdr *tsh;
 	u8 *payload ,*temp;
-	unsigned int data_len, i;
+	unsigned int data_len, i,frag_len;
+
+	// length of data accupied by only TS packets
+	unsigned int payload_len;
 
 	struct sk_buff *new_skb;
 
@@ -1867,17 +1871,27 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				goto done;
 			}
 
-			new_skb = skb_copy(skb,GFP_ATOMIC);
-			// for(i = 0; i < 7; i ++){
-			for(i = 0; i < 7; i ++){
-				//bit = (bitmap >> i) & 0x01;
-				//printf("%d",(int)bit);
-				tsh->rtpsqnum = (tsh->rtpsqnum*7+i)%65535;
+			bitmap_init(&b, tsh->bitmap);
+			while(bitmap_has_next(&b)){
+				// set up RTP number for deaggregation at the decoder
+				tsh->rtpsqnum = (tsh->rtpsqnum*BITMAP_MAX_SIZE + b.curr_pos) % 65535;
+
+				// update the bitmap for the next chunk
+				bitmap_get_next(&b);
+				payload_len = b.chunk_length * TS_PSIZE;
+
+				new_skb = skb_copy(skb,GFP_ATOMIC);
 				if (!new_skb){
 					printk(KERN_ALERT "could not copy the skb \n");
 					goto done;
 				}
-				temp = kmalloc(512 * sizeof(char), GFP_ATOMIC);
+
+				//calculate the fragment length
+				frag_len = ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + \
+						RTP_LEN + payload_len;
+
+
+				temp = kmalloc( frag_len * sizeof(char), GFP_ATOMIC);
 				if (!temp){
 					printk(KERN_ALERT "could not allocate memory\n");
 					goto done;
@@ -1898,10 +1912,10 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 				//advance to the payload (TS packet)
 				ptr_temp = ptr_temp + RTP_LEN;
-				ptr_payload = ptr_payload + RTP_LEN + i*TS_PSIZE;
+				ptr_payload = ptr_payload + RTP_LEN + b.curr_pos*TS_PSIZE;
 
 				// copy the TS packet
-				memcpy(ptr_temp, ptr_payload,TS_PSIZE);
+				memcpy(ptr_temp, ptr_payload,payload_len);
 
 				//printk(KERN_ALERT "successfully copied TS packet\n");
 
@@ -1912,7 +1926,8 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 					goto done;
 				}
 
-				memcpy(payload, temp, ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN +  TS_PSIZE);
+				memcpy(payload, temp, ETH_HLEN + IP_HDR_LEN + \
+						UDP_HDR_LEN + RTP_LEN + payload_len);
 
 				//printk(KERN_ALERT "successfully copied payload to new_skb\n");
 				/*
@@ -1922,13 +1937,13 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				 * 	 cheksums and trim the skb
 				 */
 
-				skb_trim(new_skb,ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + TS_PSIZE);
+				skb_trim(new_skb,ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + payload_len);
 
 				//printk(KERN_ALERT "successfully trimed new new_skb. data len is: %d\n", new_skb->len);
 
 				// fix IP header
 				iph = (struct iphdr *) skb_header_pointer (new_skb, ETH_HLEN, 0, NULL);
-				iph->tot_len = htons(IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + TS_PSIZE);
+				iph->tot_len = htons(IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + payload_len);
 
 				//printk(KERN_ALERT "IP len %d \n", iph->tot_len);
 
@@ -1938,7 +1953,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 				// fix UDP header
 				udph = (struct udphdr *) skb_header_pointer (new_skb, ETH_HLEN + IP_HDR_LEN, 0, NULL);
-				udph->len = htons(UDP_HDR_LEN + RTP_LEN + TS_PSIZE);
+				udph->len = htons(UDP_HDR_LEN + RTP_LEN + payload_len);
 				udph->check = 0;
 				int offset = skb_transport_offset(new_skb);
 
@@ -1966,10 +1981,11 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				// check the result
 				if (res != NETDEV_TX_OK)
 					printk(KERN_ALERT "TX not successful\n");
+
 			}
 
 			// free the skb since we already maintain the copy of it.
-			//kfree_skb(skb);
+			kfree_skb(skb);
 
 			return res;
 		}
