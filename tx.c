@@ -1834,15 +1834,15 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 	// check sanity first
 	if (!skb){
-		printk(KERN_ALERT "buffer is null\n");
+		//printk(KERN_ALERT "buffer is null\n");
 		goto done;
 	}
 	if (unlikely(skb->len < ETH_HLEN)){
-		printk(KERN_ALERT "buffer length is less than ETH_HLEN\n");
+		//printk(KERN_ALERT "buffer length is less than ETH_HLEN\n");
 		goto done;
 	}
 	if (skb->len < ETH_HLEN+IP_HDR_LEN+UDP_HDR_LEN+TS_LEN){
-		printk(KERN_ALERT "buffer length too small for a usual TS packet\n");
+		//printk(KERN_ALERT "buffer length too small for a usual TS packet\n");
 		goto done;
 	}
 
@@ -1852,21 +1852,40 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 		tsh = (struct tshdr*) skb_header_pointer (skb, ETH_HLEN+IP_HDR_LEN+UDP_HDR_LEN, 0, NULL);
 		if (IS_TS(tsh)){
-			printk(KERN_ALERT "TS packet detected. rtp_seq_num = %d \n", tsh->rtpsqnum);
+
+			//printk(KERN_ALERT "TS packet detected. rtp_seq_num = %d \n", tsh->rtpsqnum);
+
 			payload = (u8 *)skb_header_pointer (skb, 0, 0, NULL);
+			if (!payload){
+				printk(KERN_ALERT "could not get data pointer of skb\n");
+				goto done;
+			}
+
 			data_len = skb->len - TOT_HDR_LEN;
 			if (data_len != TS_LEN){
 				printk(KERN_ALERT "TS packet length is too small : %u", data_len);
 				goto done;
 			}
-			for(i = 0; 0 < 7; i ++){
+
+			new_skb = skb_copy(skb,GFP_ATOMIC);
+			// for(i = 0; i < 7; i ++){
+			for(i = 0; i < 7; i ++){
 				//bit = (bitmap >> i) & 0x01;
 				//printf("%d",(int)bit);
 				tsh->rtpsqnum = (tsh->rtpsqnum*7+i)%65535;
-				new_skb = skb_copy(skb,GFP_ATOMIC);
+				if (!new_skb){
+					printk(KERN_ALERT "could not copy the skb \n");
+					goto done;
+				}
 				temp = kmalloc(512 * sizeof(char), GFP_ATOMIC);
+				if (!temp){
+					printk(KERN_ALERT "could not allocate memory\n");
+					goto done;
+				}
 
 				memcpy(temp, payload, ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN); // copy the IP and UDP headers
+
+				//printk(KERN_ALERT "successfully copied IP and UDP headers\n");
 
 				// advance to the rtp header
 				ptr_temp = temp + ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN;
@@ -1875,18 +1894,27 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				// copy the RTP header
 				memcpy(ptr_temp, ptr_payload,RTP_LEN);
 
-				//advance to the payload
+				//printk(KERN_ALERT "successfully copied RTP header\n");
+
+				//advance to the payload (TS packet)
 				ptr_temp = ptr_temp + RTP_LEN;
 				ptr_payload = ptr_payload + RTP_LEN + i*TS_PSIZE;
 
 				// copy the TS packet
 				memcpy(ptr_temp, ptr_payload,TS_PSIZE);
 
+				//printk(KERN_ALERT "successfully copied TS packet\n");
+
 				//copy the newly created fragmet back to the skb
 				payload = (u8 *)skb_header_pointer (new_skb, 0, 0, NULL);
+				if (!payload){
+					printk(KERN_ALERT "could not get data pointer of new_skb\n");
+					goto done;
+				}
+
 				memcpy(payload, temp, ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN +  TS_PSIZE);
 
-
+				//printk(KERN_ALERT "successfully copied payload to new_skb\n");
 				/*
 				 * 	 now we have a nice skb we can pass to
 				 * 	 ieee80211_subif_start_xmit_frags.
@@ -1896,17 +1924,30 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 				skb_trim(new_skb,ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + TS_PSIZE);
 
+				//printk(KERN_ALERT "successfully trimed new new_skb. data len is: %d\n", new_skb->len);
+
 				// fix IP header
 				iph = (struct iphdr *) skb_header_pointer (new_skb, ETH_HLEN, 0, NULL);
 				iph->tot_len = htons(IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + TS_PSIZE);
+
+				//printk(KERN_ALERT "IP len %d \n", iph->tot_len);
+
 				iph->check = 0;
 				ip_send_check (iph);
 
+
 				// fix UDP header
+				udph = (struct udphdr *) skb_header_pointer (new_skb, ETH_HLEN + IP_HDR_LEN, 0, NULL);
 				udph->len = htons(UDP_HDR_LEN + RTP_LEN + TS_PSIZE);
 				udph->check = 0;
 				int offset = skb_transport_offset(new_skb);
+
+				//printk(KERN_ALERT "UDP offset %d \n", offset);
+
 				int len = new_skb->len - offset;
+
+				//printk(KERN_ALERT "UDP len %d \n", len);
+
 				udph->check = ~csum_tcpudp_magic((iph->saddr), (iph->daddr), len, IPPROTO_UDP, 0);
 
 				// free the allocated memory
@@ -1918,8 +1959,9 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				 * 	      3)
 				 */
 
+				//goto done;
 				// finally transfer the fragment
-				res = ieee80211_subif_start_xmit_frags(skb,dev);
+				res = ieee80211_subif_start_xmit_frags(new_skb,dev);
 
 				// check the result
 				if (res != NETDEV_TX_OK)
@@ -1927,7 +1969,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 			}
 
 			// free the skb since we already maintain the copy of it.
-			kfree_skb(skb);
+			//kfree_skb(skb);
 
 			return res;
 		}
