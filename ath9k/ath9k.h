@@ -326,6 +326,12 @@ struct ath_rx {
 	u32 ampdu_ref;
 };
 
+/*
+ * @author Jalil
+ */
+void ath_get_tx_state(struct q_status *sta);
+void ath_init_stats();
+
 int ath_startrecv(struct ath_softc *sc);
 bool ath_stoprecv(struct ath_softc *sc);
 u32 ath_calcrxfilter(struct ath_softc *sc);

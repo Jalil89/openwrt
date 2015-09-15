@@ -793,6 +793,10 @@ static int ath9k_start(struct ieee80211_hw *hw)
 		ath9k_hw_set_gpio(ah, ah->led_pin, 0);
 	}
 
+
+	// @author: Jalil Abdullayev
+	ath_init_stats();
+
 	/*
 	 * Reset key cache to sane defaults (all entries cleared) instead of
 	 * semi-random values after suspend/resume.
@@ -809,6 +813,17 @@ static int ath9k_start(struct ieee80211_hw *hw)
 
 	return 0;
 }
+
+
+/*
+ * @author Jalil Abdullayev
+ */
+
+void ath9k_get_tx_state(struct q_status *sta){
+
+	ath_get_tx_state(sta);
+}
+
 
 static void ath9k_tx(struct ieee80211_hw *hw,
 		     struct ieee80211_tx_control *control,
@@ -2243,6 +2258,7 @@ static void ath9k_sw_scan_complete(struct ieee80211_hw *hw)
 }
 
 struct ieee80211_ops ath9k_ops = {
+	.get_tx_state   = ath9k_get_tx_state,
 	.tx 		    = ath9k_tx,
 	.start 		    = ath9k_start,
 	.stop 		    = ath9k_stop,

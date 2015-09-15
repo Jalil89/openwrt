@@ -20,6 +20,7 @@
 #include <linux/rcupdate.h>
 #include <linux/export.h>
 #include <linux/time.h>
+#include <linux/ieee80211.h>
 #include <net/net_namespace.h>
 #include <net/ieee80211_radiotap.h>
 #include <net/cfg80211.h>
@@ -1814,6 +1815,22 @@ static void ieee80211_tx_latency_start_msrmnt(struct ieee80211_local *local,
 
 netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				    struct net_device *dev){
+	int i;
+	struct q_status sta;
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+	struct ieee80211_local *local = sdata->local;
+	local->ops->get_tx_state(&sta);
+
+	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
+		printk(KERN_ALERT "Tid num = %d \n", i);
+		printk(KERN_ALERT "Queue size = %d \n", sta.queues[i].size);
+		printk(KERN_ALERT "Avg pkt size = %d \n", sta.queues[i].avg_pkt_size);
+		printk(KERN_ALERT "Total TX pkts = %d \n", sta.queues[i].total_pkt);
+		printk(KERN_ALERT "Total successful TX pkts = %d \n", sta.queues[i].total_pkt_succ);
+	}
+
+
+	/*
 	struct bitmap_t b;
     struct iphdr *iph;
     struct udphdr *udph;
@@ -1930,12 +1947,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 						UDP_HDR_LEN + RTP_LEN + payload_len);
 
 				//printk(KERN_ALERT "successfully copied payload to new_skb\n");
-				/*
-				 * 	 now we have a nice skb we can pass to
-				 * 	 ieee80211_subif_start_xmit_frags.
-				 * 	 But we need to fix the IP and udp
-				 * 	 cheksums and trim the skb
-				 */
+
 
 				skb_trim(new_skb,ETH_HLEN + IP_HDR_LEN + UDP_HDR_LEN + RTP_LEN + payload_len);
 
@@ -1968,11 +1980,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				// free the allocated memory
 				kfree(temp);
 
-				/*
-				 * 	TODO: 1) modify skb->priority
-				 * 	      2) fragment based on bitmap
-				 * 	      3)
-				 */
+
 
 				//goto done;
 				// finally transfer the fragment
@@ -1992,6 +2000,9 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 	}
 
 	done:
+
+
+		*/
 		return ieee80211_subif_start_xmit_frags(skb,dev);
 }
 

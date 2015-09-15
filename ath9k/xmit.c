@@ -15,6 +15,7 @@
  */
 
 #include <linux/dma-mapping.h>
+#include <linux/ieee80211.h>
 #include "ath9k.h"
 #include "ar9003_mac.h"
 
@@ -49,6 +50,8 @@ static u16 bits_per_symbol[][2] = {
 	{   260,  540 },     /*  7: 64-QAM 5/6 */
 };
 
+static struct q_status tx_sta;
+
 static void ath_tx_send_normal(struct ath_softc *sc, struct ath_txq *txq,
 			       struct ath_atx_tid *tid, struct sk_buff *skb);
 static void ath_tx_complete(struct ath_softc *sc, struct sk_buff *skb,
@@ -74,6 +77,23 @@ enum {
 	MCS_HT40,
 	MCS_HT40_SGI,
 };
+
+
+
+// @author: Jalil Abdullayev
+void ath_init_stats(){
+	int i;
+
+	LOG_FUNCTION(KERN_ALERT);
+
+	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
+		tx_sta.queues[i].size = -1;
+		tx_sta.queues[i].avg_pkt_size = -1;
+		tx_sta.queues[i].total_pkt = -1;
+		tx_sta.queues[i].total_pkt_succ = -1;
+	}
+}
+
 
 /*********************/
 /* Aggregation logic */
@@ -448,6 +468,8 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 	bool flush = !!(ts->ts_status & ATH9K_TX_FLUSH);
 	int i, retries;
 	int bar_index = -1;
+
+
 
 	skb = bf->bf_mpdu;
 	hdr = (struct ieee80211_hdr *)skb->data;
@@ -2151,6 +2173,20 @@ static int ath_tx_prepare(struct ieee80211_hw *hw, struct sk_buff *skb,
 
 	setup_frame_info(hw, sta, skb, frmlen);
 	return 0;
+}
+
+void ath_get_tx_state(struct q_status *sta){
+	int i;
+
+	LOG_FUNCTION(KERN_ALERT);
+
+	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
+		sta->queues[i].size = tx_sta.queues[i].size;
+		sta->queues[i].avg_pkt_size = tx_sta.queues[i].avg_pkt_size;
+		sta->queues[i].total_pkt = tx_sta.queues[i].total_pkt;
+		sta->queues[i].total_pkt_succ = tx_sta.queues[i].total_pkt_succ;
+	}
+
 }
 
 
