@@ -1796,6 +1796,140 @@ static void ieee80211_tx_latency_start_msrmnt(struct ieee80211_local *local,
 	skb->tstamp = ktime_set(skb_arv.tv_sec, skb_arv.tv_nsec);
 }
 
+
+
+static inline int log2(unsigned int Pe){
+	switch(Pe){
+		case 1: return -10;
+		case 2: return -20;
+		case 3: return -30;
+		case 4: return -40;
+		case 5: return -51;
+		case 6: return -61;
+		case 7: return -72;
+		case 8: return -83;
+		case 9: return -94;
+		case 10: return -105;
+		case 10: return -116;
+		case 11: return -127;
+		case 12: return -139;
+		case 13: return -150;
+		case 15: return -162;
+		case 16: return -174;
+		case 17: return -186;
+		case 18: return -198;
+		case 19: return -210;
+		case 20: return -223;
+		case 21: return -235;
+		case 22: return -248;
+		case 23: return -261;
+		case 24: return -274;
+		case 25: return -287;
+		case 26: return -301;
+		case 27: return -314;
+		case 28: return -328;
+		case 29: return -342;
+		case 30: return -356;
+		case 31: return -371;
+		case 32: return -385;
+		case 33: return -400;
+		case 34: return -415;
+		case 35: return -430;
+		case 36: return -446;
+		case 37: return -462;
+		case 38: return -478;
+		case 39: return -494;
+		case 40: return -510;
+		case 41: return -527;
+		case 42: return -544;
+		case 43: return -562;
+		case 44: return -579;
+		case 45: return -597;
+		case 46: return -616;
+		case 47: return -634;
+		case 48: return -653;
+		case 49: return -673;
+		case 50: return -693;
+		case 51: return -713;
+		case 52: return -733;
+		case 53: return -755;
+		case 54: return -776;
+		case 55: return -798;
+		case 56: return -820;
+		case 57: return -843;
+		case 58: return -867;
+		case 59: return -891;
+		case 60: return -916;
+		case 61: return -941;
+		case 62: return -967;
+		case 63: return -994;
+		case 64: return -1021;
+		case 65: return -1049;
+		case 66: return -1078;
+		case 67: return -1108;
+		case 68: return -1139;
+		case 69: return -1171;
+		case 70: return -1203;
+		case 71: return -1237;
+		case 72: return -1272;
+		case 73: return -1309;
+		case 74: return -1347;
+		case 75: return -1386;
+		case 76: return -1427;
+		case 77: return -1469;
+		case 78: return -1514;
+		case 79: return -1560;
+		case 80: return -1609;
+		case 81: return -1660;
+		case 82: return -1714;
+		case 83: return -1771;
+		case 84: return -1832;
+		case 85: return -1897;
+		case 86: return -1966;
+		case 87: return -2040;
+		case 88: return -2120;
+		case 89: return -2207;
+		case 90: return -2302;
+		case 91: return -2407;
+		case 92: return -2525;
+		case 93: return -2659;
+		case 94: return -2813;
+		case 95: return -2995;
+		case 96: return -3218;
+		case 97: return -3506;
+		case 98: return -3912;
+		case 99: return -4605;
+		default: return 0;
+	}
+
+	return 0;
+}
+
+
+static inline  unsigned int
+get_optimal_frag_size(struct q_status *sta, int qid)
+{
+	int opt_frag_size = 256;
+	unsigned int overhead = MAC_OVERHEAD + UDP_HDR_LEN + IP_HDR_LEN + RTP_LEN;
+	unsigned int size = sta->queues[qid].size;
+	unsigned int avg_pkt_size = sta->queues[qid].avg_pkt_size;
+	unsigned int total_pkt = sta->queues[qid].total_pkt;
+	unsigned int total_pkt_succ = sta->queues[qid].total_pkt_succ;
+
+	unsigned Ps = (total_pkt_succ * 100)/ total_pkt;
+
+	int ln_value = log2(100 - Ps);
+	if (ln_value == 0)
+		return 0;
+
+	opt_frag_size = ((1000 * avg_pkt_size) + (overhead * ln_value))/ln_value;
+	if (opt_frag_size < 0)
+		opt_frag_size = opt_frag_size * (-1);
+
+	return opt_frag_size;
+}
+
+
 /**
  * ieee80211_subif_start_xmit - netif start_xmit function for Ethernet-type
  * subinterfaces (wlan#, WDS, and VLAN interfaces)
@@ -1815,22 +1949,7 @@ static void ieee80211_tx_latency_start_msrmnt(struct ieee80211_local *local,
 
 netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 				    struct net_device *dev){
-	int i;
-	struct q_status sta;
-	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
-	struct ieee80211_local *local = sdata->local;
-	local->ops->get_tx_state(&sta);
 
-	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
-		printk(KERN_ALERT "Tid num = %d \n", i);
-		printk(KERN_ALERT "Queue size = %d \n", sta.queues[i].size);
-		printk(KERN_ALERT "Avg pkt size = %d \n", sta.queues[i].avg_pkt_size);
-		printk(KERN_ALERT "Total TX pkts = %d \n", sta.queues[i].total_pkt);
-		printk(KERN_ALERT "Total successful TX pkts = %d \n", sta.queues[i].total_pkt_succ);
-	}
-
-
-	/*
 	struct bitmap_t b;
     struct iphdr *iph;
     struct udphdr *udph;
@@ -1875,6 +1994,22 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 		if (IS_TS(tsh)){
 
 			//printk(KERN_ALERT "TS packet detected. rtp_seq_num = %d \n", tsh->rtpsqnum);
+
+			int ite;
+			struct q_status sta;
+			struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+			struct ieee80211_local *local = sdata->local;
+			local->ops->get_tx_state(&sta);
+
+			/*
+			for (i=0; i< IEEE80211_NUM_TIDS ; i++){
+				printk(KERN_ALERT "Tid num = %d \n", i);
+				printk(KERN_ALERT "Queue size = %d \n", sta.queues[i].size);
+				printk(KERN_ALERT "Avg pkt size = %d \n", sta.queues[i].avg_pkt_size);
+				printk(KERN_ALERT "Total TX pkts = %d \n", sta.queues[i].total_pkt);
+				printk(KERN_ALERT "Total successful TX pkts = %d \n", sta.queues[i].total_pkt_succ);
+			}
+			 */
 
 			payload = (u8 *)skb_header_pointer (skb, 0, 0, NULL);
 			if (!payload){
@@ -2000,9 +2135,6 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 	}
 
 	done:
-
-
-		*/
 		return ieee80211_subif_start_xmit_frags(skb,dev);
 }
 

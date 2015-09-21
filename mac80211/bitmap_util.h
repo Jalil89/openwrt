@@ -8,7 +8,6 @@
 
 
 
-#define bitmap_has_next(b) (b->curr_pos != BITMAP_MAX_SIZE)
 
 struct bitmap_t{
 	unsigned char curr_pos;
@@ -17,10 +16,16 @@ struct bitmap_t{
 };
 
 
+static inline  unsigned int
+bitmap_has_next(struct bitmap_t *b)
+{
+	return b->curr_pos != BITMAP_MAX_SIZE;
+}
+
 static inline  unsigned char
 bitmap_get_bit(struct bitmap_t *b)
 {
-	return (b->bitmap >> b->curr_pos) & 0x01;
+	return (b->bitmap << b->curr_pos) & 0x80;
 }
 
 

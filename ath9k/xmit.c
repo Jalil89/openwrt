@@ -16,6 +16,7 @@
 
 #include <linux/dma-mapping.h>
 #include <linux/ieee80211.h>
+#include <linux/spinlock.h>
 #include "ath9k.h"
 #include "ar9003_mac.h"
 
@@ -50,7 +51,8 @@ static u16 bits_per_symbol[][2] = {
 	{   260,  540 },     /*  7: 64-QAM 5/6 */
 };
 
-static struct q_status tx_sta;
+struct q_status tx_sta;
+spinlock_t sta_lock ;
 
 static void ath_tx_send_normal(struct ath_softc *sc, struct ath_txq *txq,
 			       struct ath_atx_tid *tid, struct sk_buff *skb);
@@ -86,11 +88,13 @@ void ath_init_stats(){
 
 	LOG_FUNCTION(KERN_ALERT);
 
+	spin_lock_init(&sta_lock);
+
 	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
-		tx_sta.queues[i].size = -1;
-		tx_sta.queues[i].avg_pkt_size = -1;
-		tx_sta.queues[i].total_pkt = -1;
-		tx_sta.queues[i].total_pkt_succ = -1;
+		tx_sta.queues[i].size = -2;
+		tx_sta.queues[i].avg_pkt_size = -2;
+		tx_sta.queues[i].total_pkt = -2;
+		tx_sta.queues[i].total_pkt_succ = -2;
 	}
 }
 
@@ -466,10 +470,20 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 	struct ath_frame_info *fi;
 	int nframes;
 	bool flush = !!(ts->ts_status & ATH9K_TX_FLUSH);
-	int i, retries;
+	int i, retries, ite;
 	int bar_index = -1;
 
+	// variables for getting stats
 
+	int tid_num, q_size, total_pkts, total_pkts_succm, total_pkt_size;
+	total_pkts = 0;
+	total_pkts_succ = 0;
+	q_size = 0;
+	tid_num = 0;
+
+
+
+	//q_size = &txq->axq_depth;
 
 	skb = bf->bf_mpdu;
 	hdr = (struct ieee80211_hdr *)skb->data;
@@ -542,6 +556,7 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 
 	ath_tx_count_frames(sc, bf, ts, txok, &nframes, &nbad);
 	while (bf) {
+		total_pkts++;
 		u16 seqno = bf->bf_state.seqno;
 
 		txfail = txpending = sendbar = 0;
@@ -550,6 +565,8 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 		skb = bf->bf_mpdu;
 		tx_info = IEEE80211_SKB_CB(skb);
 		fi = get_frame_info(skb);
+
+		total_pkt_size += skb->len;
 
 		if (!BAW_WITHIN(tid->seq_start, tid->baw_size, seqno) ||
 		    !tid->active) {
@@ -562,6 +579,7 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 			/* transmit completion, subframe is
 			 * acked by block ack */
 			acked_cnt++;
+			total_pkts_succ++;
 		} else if (!isaggr && txok) {
 			/* transmit completion */
 			acked_cnt++;
@@ -641,6 +659,29 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 		bf = bf_next;
 	}
 
+	// get the tid number
+	tid_num = txq->axq_qnum;
+	q_size = txq->pending_frames;
+	printk(KERN_ALERT "tid num : %d \n", tid_num);
+	printk(KERN_ALERT "pending frames : %d \n", q_size);
+	printk(KERN_ALERT "total pkt size : %d \n", total_pkt_size);
+	printk(KERN_ALERT "total pkts : %d \n", total_pkts);
+	printk(KERN_ALERT "total pkts successful : %d \n", total_pkts_succ);
+
+	spin_lock(&sta_lock);
+
+	if (tid_num >= IEEE80211_NUM_TIDS || tid_num < 0 ){
+		printk(KERN_ALERT "ath tid number mismatch : %d \n", tid_num);
+	}
+	else{
+
+		tx_sta.queues[tid_num].size = q_size;
+		tx_sta.queues[tid_num].avg_pkt_size = total_pkt_size / total_pkts;
+		tx_sta.queues[tid_num].total_pkt = total_pkts;
+		tx_sta.queues[tid_num].total_pkt_succ = total_pkts_succ;
+
+	}
+	spin_unlock(&sta_lock);
 	/* prepend un-acked frames to the beginning of the pending frame queue */
 	if (!skb_queue_empty(&bf_pending)) {
 		if (an->sleeping)
@@ -2180,6 +2221,8 @@ void ath_get_tx_state(struct q_status *sta){
 
 	LOG_FUNCTION(KERN_ALERT);
 
+	spin_lock(&sta_lock);
+
 	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
 		sta->queues[i].size = tx_sta.queues[i].size;
 		sta->queues[i].avg_pkt_size = tx_sta.queues[i].avg_pkt_size;
@@ -2187,6 +2230,7 @@ void ath_get_tx_state(struct q_status *sta){
 		sta->queues[i].total_pkt_succ = tx_sta.queues[i].total_pkt_succ;
 	}
 
+	spin_unlock(&sta_lock);
 }
 
 

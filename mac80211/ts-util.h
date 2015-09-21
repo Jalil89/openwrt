@@ -6,6 +6,7 @@
 #define TS_HLEN 17
 #define TOT_HDR_LEN 42
 #define TS_LEN 1333
+#define MAC_OVERHEAD 34
 
 
 #define RTP_LEN 12
