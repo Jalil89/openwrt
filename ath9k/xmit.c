@@ -17,6 +17,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/ieee80211.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
+#include <linux/etherdevice.h>
+#include <net/ip.h>
 #include "ath9k.h"
 #include "ar9003_mac.h"
 
@@ -52,6 +55,9 @@ static u16 bits_per_symbol[][2] = {
 };
 
 struct q_status tx_sta;
+
+struct list_head flow_list;
+
 spinlock_t sta_lock ;
 
 static void ath_tx_send_normal(struct ath_softc *sc, struct ath_txq *txq,
@@ -90,12 +96,62 @@ void ath_init_stats(){
 
 	spin_lock_init(&sta_lock);
 
+	INIT_LIST_HEAD(&flow_list);
+
 	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
 		tx_sta.queues[i].size = -2;
-		tx_sta.queues[i].avg_pkt_size = -2;
-		tx_sta.queues[i].total_pkt = -2;
-		tx_sta.queues[i].total_pkt_succ = -2;
+		tx_sta.queues[i].rate = -2;
 	}
+}
+
+void ath_get_tx_state(struct q_status *sta){
+	int i;
+
+	LOG_FUNCTION(KERN_ALERT);
+
+	spin_lock(&sta_lock);
+
+	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
+		sta->queues[i].size = tx_sta.queues[i].size;
+		sta->queues[i].rate = tx_sta.queues[i].rate;
+	}
+
+	spin_unlock(&sta_lock);
+}
+
+
+struct flow_info* ath_get_fi(unsigned int dst_addr){
+	struct list_head *pos;
+	struct flow_info *tmp = 0;
+	list_for_each(pos, &flow_list){
+		tmp = list_entry(pos, struct flow_info, list);
+		if (tmp->dest_addr == dst_addr){
+			return tmp;
+		}
+	}
+	return 0;
+}
+
+void ath_get_flow_info(struct flow_info *fi, unsigned int dst_addr){
+	//LOG_FUNCTION(KERN_ALERT);
+	struct flow_info *tmp = ath_get_fi(dst_addr);
+	if (tmp){
+		fi->dest_addr = tmp->dest_addr;
+		fi->avg_pkt_size = tmp->avg_pkt_size;
+		fi->total_pkt = tmp->total_pkt;
+		fi->total_pkt_succ = tmp->total_pkt_succ;
+	}
+}
+
+void ath_register_new_flow(unsigned int dst_addr){
+	//LOG_FUNCTION(KERN_ALERT);
+	struct flow_info *fi;
+	fi = (struct flow_info*)kmalloc(sizeof(struct flow_info), GFP_ATOMIC);
+	fi-> dest_addr = dst_addr;
+	fi-> avg_pkt_size = 0;
+	fi-> total_pkt = 0;
+	fi-> total_pkt_succ = 0;
+	list_add_tail(&fi->list, &flow_list);
 }
 
 
@@ -448,6 +504,24 @@ static void ath_tx_count_frames(struct ath_softc *sc, struct ath_buf *bf,
 }
 
 
+
+/*
+ * @author: Jalil
+ *
+ * see if the packet is TS packet or not
+ */
+/*
+struct flow_info* ath_flow_exists(struct skbuff *skb){
+	if (!skb)                          return 0;
+	if (unlikely(skb->len < ETH_HLEN)) return 0;
+	struct iphdr *iph;
+	struct flow_info* fi;
+	iph = (struct iphdr *) skb_header_pointer (skb, ETH_HLEN, 0, NULL);
+	return 0;
+}
+*/
+
+
 static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 				 struct ath_buf *bf, struct list_head *bf_q,
 				 struct ath_tx_status *ts, int txok)
@@ -474,12 +548,17 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 	int bar_index = -1;
 
 	// variables for getting stats
+	struct flow_info *fli = 0;
+	struct flow_info *tmp = 0;
 
-	int tid_num, q_size, total_pkts, total_pkts_succm, total_pkt_size;
+	struct iphdr *iph;
+	int tid_num, q_size, total_pkts, total_pkts_succ , is_ts;
+	unsigned int total_pkt_size = 0;
 	total_pkts = 0;
 	total_pkts_succ = 0;
 	q_size = 0;
 	tid_num = 0;
+	is_ts = 0;
 
 
 
@@ -566,7 +645,20 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 		tx_info = IEEE80211_SKB_CB(skb);
 		fi = get_frame_info(skb);
 
+
+
 		total_pkt_size += skb->len;
+
+		if (skb->len > ETH_HLEN){
+			iph = (struct iphdr *) skb_header_pointer (skb, ETH_HLEN, 0, NULL);
+			if (iph && iph->protocol &&(iph->protocol == IPPROTO_UDP)){
+				tmp = ath_get_fi(iph->daddr);
+				if (tmp){
+					fli = tmp; // this is a TS packet
+				}
+			}
+		}
+
 
 		if (!BAW_WITHIN(tid->seq_start, tid->baw_size, seqno) ||
 		    !tid->active) {
@@ -662,26 +754,32 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 	// get the tid number
 	tid_num = txq->axq_qnum;
 	q_size = txq->pending_frames;
-	printk(KERN_ALERT "tid num : %d \n", tid_num);
-	printk(KERN_ALERT "pending frames : %d \n", q_size);
-	printk(KERN_ALERT "total pkt size : %d \n", total_pkt_size);
-	printk(KERN_ALERT "total pkts : %d \n", total_pkts);
-	printk(KERN_ALERT "total pkts successful : %d \n", total_pkts_succ);
+	//printk(KERN_ALERT "tid num : %d \n", tid_num);
+	//printk(KERN_ALERT "pending frames : %d \n", q_size);
+	//printk(KERN_ALERT "total pkt size : %u \n", total_pkt_size);
+	//printk(KERN_ALERT "total pkts : %d \n", total_pkts);
+	//printk(KERN_ALERT "total pkts successful : %d \n", total_pkts_succ);
 
+
+	if (fli && total_pkts > 0){
+		fli->avg_pkt_size = total_pkt_size / total_pkts;
+		fli->total_pkt = total_pkts ;
+		fli->total_pkt_succ = total_pkts_succ;
+	}
+
+	/*
 	spin_lock(&sta_lock);
 
 	if (tid_num >= IEEE80211_NUM_TIDS || tid_num < 0 ){
 		printk(KERN_ALERT "ath tid number mismatch : %d \n", tid_num);
 	}
 	else{
-
 		tx_sta.queues[tid_num].size = q_size;
-		tx_sta.queues[tid_num].avg_pkt_size = total_pkt_size / total_pkts;
-		tx_sta.queues[tid_num].total_pkt = total_pkts;
-		tx_sta.queues[tid_num].total_pkt_succ = total_pkts_succ;
 
 	}
 	spin_unlock(&sta_lock);
+	*/
+
 	/* prepend un-acked frames to the beginning of the pending frame queue */
 	if (!skb_queue_empty(&bf_pending)) {
 		if (an->sleeping)
@@ -1005,7 +1103,7 @@ ath_tx_form_aggr(struct ath_softc *sc, struct ath_txq *txq,
 	struct sk_buff *skb;
 	bool closed = false;
 
-	LOG_FUNCTION(KERN_ALERT);
+	//LOG_FUNCTION(KERN_ALERT);
 
 	bf = bf_first;
 	aggr_limit = ath_lookup_rate(sc, bf, tid);
@@ -2216,22 +2314,6 @@ static int ath_tx_prepare(struct ieee80211_hw *hw, struct sk_buff *skb,
 	return 0;
 }
 
-void ath_get_tx_state(struct q_status *sta){
-	int i;
-
-	LOG_FUNCTION(KERN_ALERT);
-
-	spin_lock(&sta_lock);
-
-	for (i=0; i< IEEE80211_NUM_TIDS ; i++){
-		sta->queues[i].size = tx_sta.queues[i].size;
-		sta->queues[i].avg_pkt_size = tx_sta.queues[i].avg_pkt_size;
-		sta->queues[i].total_pkt = tx_sta.queues[i].total_pkt;
-		sta->queues[i].total_pkt_succ = tx_sta.queues[i].total_pkt_succ;
-	}
-
-	spin_unlock(&sta_lock);
-}
 
 
 /* Upon failure caller should free skb */

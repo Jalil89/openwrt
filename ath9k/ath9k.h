@@ -331,6 +331,8 @@ struct ath_rx {
  */
 void ath_get_tx_state(struct q_status *sta);
 void ath_init_stats();
+void ath_get_flow_info(struct flow_info *fi, unsigned int dst_addr);
+void ath_register_new_flow(unsigned int dst_addr);
 
 int ath_startrecv(struct ath_softc *sc);
 bool ath_stoprecv(struct ath_softc *sc);

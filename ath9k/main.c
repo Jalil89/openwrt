@@ -825,6 +825,14 @@ void ath9k_get_tx_state(struct q_status *sta){
 }
 
 
+void ath9k_get_flow_info(struct flow_info *fi, unsigned int dst_addr){
+	ath_get_flow_info(fi,dst_addr);
+}
+
+void ath9k_register_new_flow(unsigned int dst_addr){
+	ath_register_new_flow(dst_addr);
+}
+
 static void ath9k_tx(struct ieee80211_hw *hw,
 		     struct ieee80211_tx_control *control,
 		     struct sk_buff *skb)
@@ -2258,6 +2266,8 @@ static void ath9k_sw_scan_complete(struct ieee80211_hw *hw)
 }
 
 struct ieee80211_ops ath9k_ops = {
+	.get_flow_info  = ath9k_get_flow_info,
+	.register_new_flow  = ath9k_register_new_flow,
 	.get_tx_state   = ath9k_get_tx_state,
 	.tx 		    = ath9k_tx,
 	.start 		    = ath9k_start,

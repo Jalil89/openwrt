@@ -2,6 +2,8 @@
 #define BITMAP_H
 
 
+#include "ts-util.h"
+
 #define BITMAP_MAX_SIZE 7
 
 //#define bitmap_get_bit (b) ((b)->bitmap >> (b)->curr_pos) & 0x01;)

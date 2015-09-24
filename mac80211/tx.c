@@ -1810,7 +1810,6 @@ static inline int log2(unsigned int Pe){
 		case 8: return -83;
 		case 9: return -94;
 		case 10: return -105;
-		case 10: return -116;
 		case 11: return -127;
 		case 12: return -139;
 		case 13: return -150;
@@ -1907,14 +1906,15 @@ static inline int log2(unsigned int Pe){
 
 
 static inline  unsigned int
-get_optimal_frag_size(struct q_status *sta, int qid)
+get_optimal_frag_size(
+		unsigned int avg_pkt_size ,
+		unsigned int total_pkt ,
+		unsigned int total_pkt_succ
+
+					)
 {
 	int opt_frag_size = 256;
 	unsigned int overhead = MAC_OVERHEAD + UDP_HDR_LEN + IP_HDR_LEN + RTP_LEN;
-	unsigned int size = sta->queues[qid].size;
-	unsigned int avg_pkt_size = sta->queues[qid].avg_pkt_size;
-	unsigned int total_pkt = sta->queues[qid].total_pkt;
-	unsigned int total_pkt_succ = sta->queues[qid].total_pkt_succ;
 
 	unsigned Ps = (total_pkt_succ * 100)/ total_pkt;
 
@@ -1955,7 +1955,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
     struct udphdr *udph;
     struct tshdr *tsh;
 	u8 *payload ,*temp;
-	unsigned int data_len, i,frag_len;
+	unsigned int data_len, i,frag_len, opt_frag_size;
 
 	// length of data accupied by only TS packets
 	unsigned int payload_len;
@@ -1967,10 +1967,15 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 	unsigned char *ptr_temp;
 	unsigned char *ptr_payload;
 
+	struct flow_info fi;
+	fi.dest_addr = 0;
+
 	netdev_tx_t  res = NETDEV_TX_OK;
 
+	opt_frag_size = 256; // initialize
 
-	LOG_FUNCTION(KERN_ALERT);
+
+	//LOG_FUNCTION(KERN_ALERT);
 
 	// check sanity first
 	if (!skb){
@@ -1995,22 +2000,19 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 
 			//printk(KERN_ALERT "TS packet detected. rtp_seq_num = %d \n", tsh->rtpsqnum);
 
+
 			int ite;
 			struct q_status sta;
 			struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 			struct ieee80211_local *local = sdata->local;
-			local->ops->get_tx_state(&sta);
+			//local->ops->get_tx_state(&sta);
+			local->ops->get_flow_info(&fi,iph->daddr);
+			if (fi.dest_addr){
+				//printk(KERN_ALERT "Found a flow info for %u", iph->daddr);
 
-			/*
-			for (i=0; i< IEEE80211_NUM_TIDS ; i++){
-				printk(KERN_ALERT "Tid num = %d \n", i);
-				printk(KERN_ALERT "Queue size = %d \n", sta.queues[i].size);
-				printk(KERN_ALERT "Avg pkt size = %d \n", sta.queues[i].avg_pkt_size);
-				printk(KERN_ALERT "Total TX pkts = %d \n", sta.queues[i].total_pkt);
-				printk(KERN_ALERT "Total successful TX pkts = %d \n", sta.queues[i].total_pkt_succ);
+			}else{
+				local->ops->register_new_flow(iph->daddr);
 			}
-			 */
-
 			payload = (u8 *)skb_header_pointer (skb, 0, 0, NULL);
 			if (!payload){
 				printk(KERN_ALERT "could not get data pointer of skb\n");
